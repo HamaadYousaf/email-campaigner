@@ -1,6 +1,16 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, EmailStr
 from typing import List, Dict
+import os
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+load_dotenv()
+
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_KEY")
+supabase = create_client(supabase_url, supabase_key)
+
 
 app = FastAPI()
 
@@ -77,17 +87,27 @@ async def send_campaign(campaign_id: int):
 
 
 @app.get("/campaigns/{campaign_id}")
-async def get_campaign(campaign_id: int):
-    """Return campaign and all its email statuses."""
-    campaign = _campaigns.get(campaign_id)
-    if not campaign:
+async def get_campaign(campaign_id: str):
+    response = (
+        supabase.table("campaigns")
+        .select("*")
+        .eq("id", campaign_id)
+        .maybe_single()
+        .execute()
+    )
+
+    if not response:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    # Return only the fields the frontend expects
-    emails = [
-        {"address": e["address"], "status": e["status"]}
-        for e in campaign.get("emails", [])
-    ]
+    campaign = response.data
+
+    emails_response = (
+        supabase.table("emails")
+        .select("address, status, sent_at")
+        .eq("campaign_id", campaign_id)
+        .execute()
+    )
+    emails = emails_response.data if emails_response.data else []
 
     return {
         "id": campaign["id"],
