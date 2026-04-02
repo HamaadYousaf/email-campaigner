@@ -36,10 +36,15 @@ async def create_campaign(payload: CampaignCreate):
         "status": "draft",
     }
 
-    response = supabase.table("campaigns").insert(campaign_payload).single().execute()
+    try:
+        response = supabase.table("campaigns").insert(campaign_payload).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to create campaign: {exc}")
 
-    if response.error:
-        raise HTTPException(status_code=500, detail=str(response.error))
+    if not response or not getattr(response, "data", None):
+        raise HTTPException(
+            status_code=500, detail="Failed to create campaign, empty response"
+        )
 
     return response.data
 
