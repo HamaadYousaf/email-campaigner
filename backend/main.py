@@ -14,12 +14,6 @@ supabase = create_client(supabase_url, supabase_key)
 
 app = FastAPI()
 
-# In-memory placeholder storage (replace with DB in later steps)
-_campaigns: Dict[int, Dict] = {}
-_emails: Dict[int, Dict] = {}
-_next_campaign_id = 1
-_next_email_id = 1
-
 
 class CampaignCreate(BaseModel):
     name: str
@@ -37,37 +31,45 @@ async def root():
 @app.post("/campaigns")
 async def create_campaign(payload: CampaignCreate):
     """Create a campaign."""
-    global _next_campaign_id
-
-    campaign = {
-        "id": _next_campaign_id,
+    campaign_payload = {
         "name": payload.name,
         "status": "draft",
-        "emails": [],
     }
-    _campaigns[_next_campaign_id] = campaign
-    _next_campaign_id += 1
-    return campaign
+
+    response = supabase.table("campaigns").insert(campaign_payload).single().execute()
+
+    if response.error:
+        raise HTTPException(status_code=500, detail=str(response.error))
+
+    return response.data
 
 
 @app.post("/campaigns/{campaign_id}/emails")
 async def add_emails(campaign_id: int, payload: EmailsCreate):
     """Add emails to a campaign."""
-    campaign = _campaigns.get(campaign_id)
-    if not campaign:
+    camp_response = (
+        supabase.table("campaigns")
+        .select("id")
+        .eq("id", campaign_id)
+        .maybe_single()
+        .execute()
+    )
+    if camp_response.error or not camp_response.data:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    global _next_email_id
-    for address in payload.emails:
-        email = {
-            "id": _next_email_id,
+    emails_payload = [
+        {
             "campaign_id": campaign_id,
             "address": address,
             "status": "pending",
         }
-        _emails[_next_email_id] = email
-        campaign["emails"].append(email)
-        _next_email_id += 1
+        for address in payload.emails
+    ]
+
+    response = supabase.table("emails").insert(emails_payload).execute()
+
+    if response.error:
+        raise HTTPException(status_code=500, detail=str(response.error))
 
     return {"added": len(payload.emails)}
 
@@ -75,14 +77,32 @@ async def add_emails(campaign_id: int, payload: EmailsCreate):
 @app.post("/campaigns/{campaign_id}/send")
 async def send_campaign(campaign_id: int):
     """Queue campaign emails for sending."""
-    campaign = _campaigns.get(campaign_id)
-    if not campaign:
+    camp_response = (
+        supabase.table("campaigns")
+        .select("id")
+        .eq("id", campaign_id)
+        .maybe_single()
+        .execute()
+    )
+    if camp_response.error or not camp_response.data:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    # In a real implementation this would push jobs to Redis
-    # For now, just update status and report how many were queued
-    campaign["status"] = "queued"
-    queued_count = len(campaign["emails"])
+    update_response = (
+        supabase.table("campaigns")
+        .update({"status": "queued"})
+        .eq("id", campaign_id)
+        .single()
+        .execute()
+    )
+
+    if update_response.error:
+        raise HTTPException(status_code=500, detail=str(update_response.error))
+
+    emails_response = (
+        supabase.table("emails").select("id").eq("campaign_id", campaign_id).execute()
+    )
+
+    queued_count = len(emails_response.data) if emails_response.data else 0
     return {"queued": queued_count}
 
 
