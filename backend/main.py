@@ -52,14 +52,18 @@ async def create_campaign(payload: CampaignCreate):
 @app.post("/campaigns/{campaign_id}/emails")
 async def add_emails(campaign_id: int, payload: EmailsCreate):
     """Add emails to a campaign."""
-    camp_response = (
-        supabase.table("campaigns")
-        .select("id")
-        .eq("id", campaign_id)
-        .maybe_single()
-        .execute()
-    )
-    if camp_response.error or not camp_response.data:
+    try:
+        camp_response = (
+            supabase.table("campaigns")
+            .select("id")
+            .eq("id", campaign_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to query campaign: {exc}")
+
+    if not camp_response or not camp_response.data:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     emails_payload = [
@@ -71,10 +75,13 @@ async def add_emails(campaign_id: int, payload: EmailsCreate):
         for address in payload.emails
     ]
 
-    response = supabase.table("emails").insert(emails_payload).execute()
+    try:
+        response = supabase.table("emails").insert(emails_payload).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to insert emails: {exc}")
 
-    if response.error:
-        raise HTTPException(status_code=500, detail=str(response.error))
+    if not response or not getattr(response, "data", None):
+        raise HTTPException(status_code=500, detail="Failed to insert emails")
 
     return {"added": len(payload.emails)}
 
@@ -82,57 +89,85 @@ async def add_emails(campaign_id: int, payload: EmailsCreate):
 @app.post("/campaigns/{campaign_id}/send")
 async def send_campaign(campaign_id: int):
     """Queue campaign emails for sending."""
-    camp_response = (
-        supabase.table("campaigns")
-        .select("id")
-        .eq("id", campaign_id)
-        .maybe_single()
-        .execute()
-    )
-    if camp_response.error or not camp_response.data:
+    try:
+        camp_response = (
+            supabase.table("campaigns")
+            .select("id")
+            .eq("id", campaign_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to query campaign: {exc}")
+
+    if not camp_response or not camp_response.data:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    update_response = (
-        supabase.table("campaigns")
-        .update({"status": "queued"})
-        .eq("id", campaign_id)
-        .single()
-        .execute()
+    try:
+        update_response = (
+            supabase.table("campaigns")
+            .update({"status": "queued"})
+            .eq("id", campaign_id)
+            .single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update campaign status: {exc}"
+        )
+
+    if not update_response or not getattr(update_response, "data", None):
+        raise HTTPException(status_code=500, detail="Failed to update campaign status")
+
+    try:
+        emails_response = (
+            supabase.table("emails")
+            .select("id")
+            .eq("campaign_id", campaign_id)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to query campaign emails: {exc}"
+        )
+
+    queued_count = (
+        len(emails_response.data) if emails_response and emails_response.data else 0
     )
-
-    if update_response.error:
-        raise HTTPException(status_code=500, detail=str(update_response.error))
-
-    emails_response = (
-        supabase.table("emails").select("id").eq("campaign_id", campaign_id).execute()
-    )
-
-    queued_count = len(emails_response.data) if emails_response.data else 0
     return {"queued": queued_count}
 
 
 @app.get("/campaigns/{campaign_id}")
 async def get_campaign(campaign_id: str):
-    response = (
-        supabase.table("campaigns")
-        .select("*")
-        .eq("id", campaign_id)
-        .maybe_single()
-        .execute()
-    )
+    try:
+        response = (
+            supabase.table("campaigns")
+            .select("*")
+            .eq("id", campaign_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to query campaign: {exc}")
 
-    if not response:
+    if not response or not response.data:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     campaign = response.data
 
-    emails_response = (
-        supabase.table("emails")
-        .select("address, status, sent_at")
-        .eq("campaign_id", campaign_id)
-        .execute()
-    )
-    emails = emails_response.data if emails_response.data else []
+    try:
+        emails_response = (
+            supabase.table("emails")
+            .select("address, status, sent_at")
+            .eq("campaign_id", campaign_id)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to query campaign emails: {exc}"
+        )
+
+    emails = emails_response.data if emails_response and emails_response.data else []
 
     return {
         "id": campaign["id"],
