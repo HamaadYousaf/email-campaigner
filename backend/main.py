@@ -104,22 +104,6 @@ async def send_campaign(campaign_id: int):
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     try:
-        update_response = (
-            supabase.table("campaigns")
-            .update({"status": "queued"})
-            .eq("id", campaign_id)
-            .single()
-            .execute()
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to update campaign status: {exc}"
-        )
-
-    if not update_response or not getattr(update_response, "data", None):
-        raise HTTPException(status_code=500, detail="Failed to update campaign status")
-
-    try:
         emails_response = (
             supabase.table("emails")
             .select("id")
@@ -134,6 +118,27 @@ async def send_campaign(campaign_id: int):
     queued_count = (
         len(emails_response.data) if emails_response and emails_response.data else 0
     )
+
+    if queued_count == 0:
+        raise HTTPException(
+            status_code=400, detail="Cannot send campaign with no emails"
+        )
+
+    try:
+        update_response = (
+            supabase.table("campaigns")
+            .update({"status": "queued"})
+            .eq("id", campaign_id)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update campaign status: {exc}"
+        )
+
+    if not update_response or not getattr(update_response, "data", None):
+        raise HTTPException(status_code=500, detail="Failed to update campaign status")
+
     return {"queued": queued_count}
 
 
