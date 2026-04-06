@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, EmailStr
-from typing import List, Dict
+from typing import List, Dict, Optional
 import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -17,10 +17,18 @@ app = FastAPI()
 
 class CampaignCreate(BaseModel):
     name: str
+    subject: str
+    body: str
 
 
 class EmailsCreate(BaseModel):
     emails: List[EmailStr]
+
+
+class CampaignUpdate(BaseModel):
+    name: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
 
 
 @app.get("/")
@@ -33,6 +41,8 @@ async def create_campaign(payload: CampaignCreate):
     """Create a campaign."""
     campaign_payload = {
         "name": payload.name,
+        "subject": payload.subject,
+        "body": payload.body,
         "status": "draft",
     }
 
@@ -45,6 +55,54 @@ async def create_campaign(payload: CampaignCreate):
         raise HTTPException(
             status_code=500, detail="Failed to create campaign, empty response"
         )
+
+    return response.data
+
+
+@app.put("/campaigns/{campaign_id}")
+async def edit_campaign(campaign_id: int, payload: CampaignUpdate):
+    """Edit a campaign (name, subject, and/or body)."""
+    try:
+        camp_response = (
+            supabase.table("campaigns")
+            .select("id")
+            .eq("id", campaign_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to query campaign: {exc}")
+
+    if not camp_response or not camp_response.data:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    # Build update payload with only provided fields
+    update_payload = {}
+    if payload.name is not None:
+        update_payload["name"] = payload.name
+    if payload.subject is not None:
+        update_payload["subject"] = payload.subject
+    if payload.body is not None:
+        update_payload["body"] = payload.body
+
+    if not update_payload:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one field (name, subject, or body) must be provided",
+        )
+
+    try:
+        response = (
+            supabase.table("campaigns")
+            .update(update_payload)
+            .eq("id", campaign_id)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to update campaign: {exc}")
+
+    if not response or not getattr(response, "data", None):
+        raise HTTPException(status_code=500, detail="Failed to update campaign")
 
     return response.data
 
@@ -84,6 +142,31 @@ async def add_emails(campaign_id: int, payload: EmailsCreate):
         raise HTTPException(status_code=500, detail="Failed to insert emails")
 
     return {"added": len(payload.emails)}
+
+
+@app.delete("/emails/{email_id}")
+async def delete_email(email_id: int):
+    """Delete an email by ID."""
+    try:
+        email_response = (
+            supabase.table("emails")
+            .select("id")
+            .eq("id", email_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to query email: {exc}")
+
+    if not email_response or not email_response.data:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    try:
+        response = supabase.table("emails").delete().eq("id", email_id).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete email: {exc}")
+
+    return {"deleted": email_id}
 
 
 @app.post("/campaigns/{campaign_id}/send")
@@ -177,6 +260,8 @@ async def get_campaign(campaign_id: str):
     return {
         "id": campaign["id"],
         "name": campaign["name"],
+        "subject": campaign["subject"],
+        "body": campaign["body"],
         "status": campaign["status"],
         "emails": emails,
     }
