@@ -17,6 +17,8 @@ app = FastAPI()
 
 class CampaignCreate(BaseModel):
     name: str
+    subject: str
+    body: str
 
 
 class EmailsCreate(BaseModel):
@@ -33,6 +35,8 @@ async def create_campaign(payload: CampaignCreate):
     """Create a campaign."""
     campaign_payload = {
         "name": payload.name,
+        "subject": payload.subject,
+        "body": payload.body,
         "status": "draft",
     }
 
