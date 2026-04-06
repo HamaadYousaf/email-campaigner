@@ -144,6 +144,31 @@ async def add_emails(campaign_id: int, payload: EmailsCreate):
     return {"added": len(payload.emails)}
 
 
+@app.delete("/emails/{email_id}")
+async def delete_email(email_id: int):
+    """Delete an email by ID."""
+    try:
+        email_response = (
+            supabase.table("emails")
+            .select("id")
+            .eq("id", email_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to query email: {exc}")
+
+    if not email_response or not email_response.data:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    try:
+        response = supabase.table("emails").delete().eq("id", email_id).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete email: {exc}")
+
+    return {"deleted": email_id}
+
+
 @app.post("/campaigns/{campaign_id}/send")
 async def send_campaign(campaign_id: int):
     """Queue campaign emails for sending."""
