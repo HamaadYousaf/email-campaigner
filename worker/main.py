@@ -1,5 +1,6 @@
 import redis
 import time
+import random
 from supabase import create_client
 from dotenv import load_dotenv
 import os
@@ -43,16 +44,27 @@ def process_emails():
                     print(f"Error fetching email data for ID {email_id}: {e}")
                     continue
 
-                # Simulate sending email
-                print(f"Sending email to {address} for campaign {campaign_id}")
-                time.sleep(1)  # simulate processing time
+                # Simulate sending email with 70% success rate
+                success = random.random() < 0.7
+                if success:
+                    print(f"Sending email to {address} for campaign {campaign_id}")
+                    time.sleep(
+                        random.uniform(0.1, 0.5)
+                    )  # 100-500ms for successful send
+                    status = "sent"
+                else:
+                    print(
+                        f"Failed to send email to {address} for campaign {campaign_id}"
+                    )
+                    time.sleep(random.uniform(0.05, 0.2))  # 50-200ms for failed attempt
+                    status = "failed"
 
                 # Update email status in Supabase
                 supabase.table("emails").update(
-                    {"status": "sent", "sent_at": "now()"}
+                    {"status": status, "sent_at": "now()"}
                 ).eq("id", email_id).execute()
 
-                print(f"Email {email_id} marked as sent")
+                print(f"Email {email_id} marked as {status}")
 
         except Exception as e:
             print(f"Error processing email: {e}")
