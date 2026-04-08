@@ -4,12 +4,15 @@ from typing import List, Dict, Optional
 import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
+import redis
 
 load_dotenv()
 
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 supabase = create_client(supabase_url, supabase_key)
+
+redis_client = redis.Redis(host='localhost', port=6379, db=0)
 
 
 app = FastAPI()
@@ -198,14 +201,20 @@ async def send_campaign(campaign_id: int):
             status_code=500, detail=f"Failed to query campaign emails: {exc}"
         )
 
-    queued_count = (
-        len(emails_response.data) if emails_response and emails_response.data else 0
-    )
-
-    if queued_count == 0:
+    if not emails_response or not emails_response.data:
         raise HTTPException(
             status_code=400, detail="Cannot send campaign with no emails"
         )
+
+    try:
+        for email in emails_response.data:
+            redis_client.rpush('email_queue', email['id'])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to queue emails: {exc}"
+        )
+
+    queued_count = len(emails_response.data)
 
     try:
         update_response = (
