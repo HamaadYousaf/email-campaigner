@@ -4,6 +4,7 @@ import random
 from supabase import create_client
 from dotenv import load_dotenv
 import os
+from prometheus_client import Counter, Histogram, Gauge, start_http_server
 
 load_dotenv()
 
@@ -12,6 +13,27 @@ supabase_key = os.getenv("SUPABASE_KEY")
 supabase = create_client(supabase_url, supabase_key)
 
 redis_client = redis.Redis(host="localhost", port=6379, db=0)
+
+emails_processed_total = Counter(
+    "emails_processed_total",
+    "Total successfully delivered emails",
+)
+emails_failed_total = Counter(
+    "emails_failed_total",
+    "Total failed emails",
+)
+email_processing_duration_seconds = Histogram(
+    "email_processing_duration_seconds",
+    "Email processing duration in seconds",
+)
+email_queue_length = Gauge(
+    "email_queue_length",
+    "Current number of messages waiting in the email queue",
+)
+worker_up = Gauge(
+    "worker_up",
+    "Worker process alive indicator",
+)
 
 
 def process_emails():
@@ -45,25 +67,32 @@ def process_emails():
                     continue
 
                 # Simulate sending email with 70% success rate
-                success = random.random() < 0.7
-                if success:
-                    print(f"Sending email to {address} for campaign {campaign_id}")
-                    time.sleep(
-                        random.uniform(0.1, 0.5)
-                    )  # 100-500ms for successful send
-                    status = "sent"
-                else:
-                    print(
-                        f"Failed to send email to {address} for campaign {campaign_id}"
-                    )
-                    time.sleep(random.uniform(0.05, 0.2))  # 50-200ms for failed attempt
-                    status = "failed"
+                with email_processing_duration_seconds.time():
+                    success = random.random() < 0.7
+                    if success:
+                        print(f"Sending email to {address} for campaign {campaign_id}")
+                        time.sleep(
+                            random.uniform(0.1, 0.5)
+                        )  # 100-500ms for successful send
+                        status = "sent"
+                    else:
+                        print(
+                            f"Failed to send email to {address} for campaign {campaign_id}"
+                        )
+                        time.sleep(random.uniform(0.05, 0.2))  # 50-200ms for failed attempt
+                        status = "failed"
 
                 # Update email status in Supabase
                 supabase.table("emails").update(
                     {"status": status, "sent_at": "now()"}
                 ).eq("id", email_id).execute()
 
+                if success:
+                    emails_processed_total.inc()
+                else:
+                    emails_failed_total.inc()
+
+                email_queue_length.set(redis_client.llen("email_queue"))
                 print(f"Email {email_id} marked as {status}")
 
         except Exception as e:
@@ -72,4 +101,7 @@ def process_emails():
 
 
 if __name__ == "__main__":
+    start_http_server(8001)
+    worker_up.set(1)
+    email_queue_length.set(redis_client.llen("email_queue"))
     process_emails()
