@@ -38,6 +38,13 @@ Backend returns: {
 ]
 }
 
+GET /metrics
+What it does: Exposes Prometheus metrics for the backend service, including queue length and HTTP performance.
+Backend returns: Prometheus text exposition for all registered metrics.
+
+Worker metrics endpoint: http://localhost:8001/metrics
+What it does: Exposes worker-level metrics such as worker_up, processing duration, success/failure counts, and queue length.
+
 The Full Flow End to End
 
 1. POST /campaigns → creates campaign

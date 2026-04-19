@@ -1,10 +1,21 @@
-from fastapi import FastAPI, HTTPException
+import time
+
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from typing import List, Dict, Optional
 import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
 import redis
+from prometheus_client import (
+    Counter,
+    Histogram,
+    Gauge,
+    generate_latest,
+    CONTENT_TYPE_LATEST,
+)
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 load_dotenv()
 
@@ -12,10 +23,58 @@ supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 supabase = create_client(supabase_url, supabase_key)
 
-redis_client = redis.Redis(host='localhost', port=6379, db=0)
+redis_client = redis.Redis(host="redis", port=6379, db=0)
 
 
 app = FastAPI()
+
+emails_processed_total = Counter(
+    "emails_processed_total",
+    "Total successfully delivered emails",
+)
+emails_failed_total = Counter(
+    "emails_failed_total",
+    "Total failed emails",
+)
+email_processing_duration_seconds = Histogram(
+    "email_processing_duration_seconds",
+    "Email processing duration in seconds",
+)
+email_queue_length = Gauge(
+    "email_queue_length",
+    "Current number of messages waiting in the email queue",
+)
+http_requests_total = Counter(
+    "http_requests_total",
+    "Total number of HTTP requests",
+    ["method", "endpoint", "http_status"],
+)
+http_request_duration_seconds = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request duration in seconds",
+    ["method", "endpoint"],
+)
+
+
+class PrometheusMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        response = await call_next(request)
+        elapsed = time.time() - start_time
+        endpoint = request.url.path
+        method = request.method
+        status_code = response.status_code
+        http_requests_total.labels(
+            method=method, endpoint=endpoint, http_status=status_code
+        ).inc()
+        http_request_duration_seconds.labels(
+            method=method,
+            endpoint=endpoint,
+        ).observe(elapsed)
+        return response
+
+
+app.add_middleware(PrometheusMiddleware)
 
 
 class CampaignCreate(BaseModel):
@@ -208,13 +267,12 @@ async def send_campaign(campaign_id: int):
 
     try:
         for email in emails_response.data:
-            redis_client.rpush('email_queue', email['id'])
+            redis_client.rpush("email_queue", email["id"])
     except Exception as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to queue emails: {exc}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to queue emails: {exc}")
 
     queued_count = len(emails_response.data)
+    email_queue_length.set(redis_client.llen("email_queue"))
 
     try:
         update_response = (
@@ -274,3 +332,12 @@ async def get_campaign(campaign_id: str):
         "status": campaign["status"],
         "emails": emails,
     }
+
+
+@app.get("/metrics")
+async def metrics():
+    try:
+        email_queue_length.set(redis_client.llen("email_queue"))
+    except Exception:
+        email_queue_length.set(0)
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
