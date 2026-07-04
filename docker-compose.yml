@@ -33,3 +33,12 @@ services:
             - redis
         env_file:
             - ./.env
+
+    worker:
+        build: ./worker
+        ports:
+            - "8001:8001"
+        depends_on:
+            - redis
+        env_file:
+            - ./.env

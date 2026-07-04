@@ -12,7 +12,7 @@ supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 supabase = create_client(supabase_url, supabase_key)
 
-redis_client = redis.Redis(host="localhost", port=6379, db=0)
+redis_client = redis.Redis(host="redis", port=6379, db=0)
 
 emails_processed_total = Counter(
     "emails_processed_total",
@@ -79,7 +79,9 @@ def process_emails():
                         print(
                             f"Failed to send email to {address} for campaign {campaign_id}"
                         )
-                        time.sleep(random.uniform(0.05, 0.2))  # 50-200ms for failed attempt
+                        time.sleep(
+                            random.uniform(0.05, 0.2)
+                        )  # 50-200ms for failed attempt
                         status = "failed"
 
                 # Update email status in Supabase
@@ -104,4 +106,5 @@ if __name__ == "__main__":
     start_http_server(8001)
     worker_up.set(1)
     email_queue_length.set(redis_client.llen("email_queue"))
+    print("Worker started, listening for emails...")
     process_emails()
