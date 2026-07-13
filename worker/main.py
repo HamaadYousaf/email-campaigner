@@ -39,6 +39,7 @@ worker_up = Gauge(
 def process_emails():
     """Continuously read the Redis queue for emails using blocking pop and simulate sending."""
     while True:
+        worker_up.set(1)
         try:
             # blpop returns (queue_name, item) as bytes
             result = redis_client.blpop(
@@ -98,6 +99,7 @@ def process_emails():
                 print(f"Email {email_id} marked as {status}")
 
         except Exception as e:
+            worker_up.set(0)
             print(f"Error processing email: {e}")
             time.sleep(5)  # wait before retrying on error
 
