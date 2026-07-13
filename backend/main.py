@@ -28,21 +28,29 @@ redis_client = redis.Redis(host="redis", port=6379, db=0)
 
 app = FastAPI()
 
-emails_processed_total = Counter(
-    "emails_processed_total",
-    "Total successfully delivered emails",
-)
-emails_failed_total = Counter(
-    "emails_failed_total",
-    "Total failed emails",
-)
-email_processing_duration_seconds = Histogram(
-    "email_processing_duration_seconds",
-    "Email processing duration in seconds",
-)
 email_queue_length = Gauge(
     "email_queue_length",
     "Current number of messages waiting in the email queue",
+)
+campaigns_created_total = Counter(
+    "campaigns_created_total",
+    "Total number of campaigns created",
+)
+campaigns_sent_total = Counter(
+    "campaigns_sent_total",
+    "Total number of campaigns queued for sending",
+)
+emails_added_total = Counter(
+    "emails_added_total",
+    "Total number of emails added to campaigns",
+)
+email_queue_failures_total = Counter(
+    "email_queue_failures_total",
+    "Total number of failures to enqueue emails",
+)
+active_campaign_sends = Gauge(
+    "active_campaign_sends",
+    "Number of campaigns currently being processed for sending",
 )
 http_requests_total = Counter(
     "http_requests_total",
@@ -118,6 +126,7 @@ async def create_campaign(payload: CampaignCreate):
             status_code=500, detail="Failed to create campaign, empty response"
         )
 
+    campaigns_created_total.inc()
     return response.data
 
 
@@ -203,6 +212,7 @@ async def add_emails(campaign_id: int, payload: EmailsCreate):
     if not response or not getattr(response, "data", None):
         raise HTTPException(status_code=500, detail="Failed to insert emails")
 
+    emails_added_total.inc(len(payload.emails))
     return {"added": len(payload.emails)}
 
 
@@ -234,62 +244,74 @@ async def delete_email(email_id: int):
 @app.post("/campaigns/{campaign_id}/send")
 async def send_campaign(campaign_id: int):
     """Queue campaign emails for sending."""
+    active_campaign_sends.inc()
     try:
-        camp_response = (
-            supabase.table("campaigns")
-            .select("id")
-            .eq("id", campaign_id)
-            .maybe_single()
-            .execute()
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to query campaign: {exc}")
+        try:
+            camp_response = (
+                supabase.table("campaigns")
+                .select("id")
+                .eq("id", campaign_id)
+                .maybe_single()
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to query campaign: {exc}"
+            )
 
-    if not camp_response or not camp_response.data:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+        if not camp_response or not camp_response.data:
+            raise HTTPException(status_code=404, detail="Campaign not found")
 
-    try:
-        emails_response = (
-            supabase.table("emails")
-            .select("id")
-            .eq("campaign_id", campaign_id)
-            .execute()
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to query campaign emails: {exc}"
-        )
+        try:
+            emails_response = (
+                supabase.table("emails")
+                .select("id")
+                .eq("campaign_id", campaign_id)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to query campaign emails: {exc}"
+            )
 
-    if not emails_response or not emails_response.data:
-        raise HTTPException(
-            status_code=400, detail="Cannot send campaign with no emails"
-        )
+        if not emails_response or not emails_response.data:
+            raise HTTPException(
+                status_code=400, detail="Cannot send campaign with no emails"
+            )
 
-    try:
-        for email in emails_response.data:
-            redis_client.rpush("email_queue", email["id"])
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to queue emails: {exc}")
+        try:
+            for email in emails_response.data:
+                redis_client.rpush("email_queue", email["id"])
+        except Exception as exc:
+            email_queue_failures_total.inc()
+            raise HTTPException(
+                status_code=500, detail=f"Failed to queue emails: {exc}"
+            )
 
-    queued_count = len(emails_response.data)
-    email_queue_length.set(redis_client.llen("email_queue"))
+        queued_count = len(emails_response.data)
+        email_queue_length.set(redis_client.llen("email_queue"))
+        campaigns_sent_total.inc()
 
-    try:
-        update_response = (
-            supabase.table("campaigns")
-            .update({"status": "queued"})
-            .eq("id", campaign_id)
-            .execute()
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to update campaign status: {exc}"
-        )
+        try:
+            update_response = (
+                supabase.table("campaigns")
+                .update({"status": "queued"})
+                .eq("id", campaign_id)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to update campaign status: {exc}"
+            )
 
-    if not update_response or not getattr(update_response, "data", None):
-        raise HTTPException(status_code=500, detail="Failed to update campaign status")
+        if not update_response or not getattr(update_response, "data", None):
+            raise HTTPException(
+                status_code=500, detail="Failed to update campaign status"
+            )
 
-    return {"queued": queued_count}
+        return {"queued": queued_count}
+    finally:
+        active_campaign_sends.dec()
 
 
 @app.get("/campaigns/{campaign_id}")
