@@ -1,122 +1,162 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useEffect, useState } from 'react';
+import './index.css';
 
-function App() {
-  const [count, setCount] = useState(0)
+function formatDate(value) {
+    if (!value) {
+        return 'Not sent';
+    }
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return 'Not sent';
+    }
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+    return date.toLocaleString();
 }
 
-export default App
+function App() {
+    const [campaigns, setCampaigns] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [selectedCampaignId, setSelectedCampaignId] = useState(null);
+    const [selectedCampaign, setSelectedCampaign] = useState(null);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [detailError, setDetailError] = useState('');
+
+    useEffect(() => {
+        const loadCampaigns = async () => {
+            try {
+                const response = await fetch('/campaigns');
+                if (!response.ok) {
+                    throw new Error('Failed to load campaigns');
+                }
+
+                const data = await response.json();
+                setCampaigns(data);
+            } catch (err) {
+                setError(err.message || 'Something went wrong');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadCampaigns();
+    }, []);
+
+    useEffect(() => {
+        if (!selectedCampaignId) {
+            return;
+        }
+
+        let isActive = true;
+        const loadCampaign = async () => {
+            setDetailLoading(true);
+            setDetailError('');
+
+            try {
+                const response = await fetch(`/campaigns/${selectedCampaignId}`);
+                if (!response.ok) {
+                    throw new Error('Failed to load campaign details');
+                }
+
+                const data = await response.json();
+                if (isActive) {
+                    setSelectedCampaign(data);
+                }
+            } catch (err) {
+                if (isActive) {
+                    setDetailError(err.message || 'Something went wrong');
+                    setSelectedCampaign(null);
+                }
+            } finally {
+                if (isActive) {
+                    setDetailLoading(false);
+                }
+            }
+        };
+
+        loadCampaign();
+
+        return () => {
+            isActive = false;
+        };
+    }, [selectedCampaignId]);
+
+    return (
+        <div className="app-shell">
+            <header className="top-bar">
+                <h1>Email Campaigns</h1>
+                <button className="primary-btn" type="button">
+                    Create campaign
+                </button>
+            </header>
+
+            {!selectedCampaignId ? (
+                <section className="campaign-list">
+                    <p className="section-label">Your campaigns</p>
+                    {loading && <p className="status-text">Loading campaigns...</p>}
+                    {error && <p className="status-text error">{error}</p>}
+                    {!loading && !error && campaigns.length === 0 && (
+                        <p className="status-text">No campaigns found yet.</p>
+                    )}
+                    {!loading && !error && campaigns.map((campaign) => (
+                        <button
+                            key={campaign.id}
+                            type="button"
+                            className="campaign-card"
+                            onClick={() => setSelectedCampaignId(campaign.id)}
+                        >
+                            <span className="campaign-title">{campaign.title}</span>
+                            <span className="campaign-meta">{campaign.emails} emails</span>
+                        </button>
+                    ))}
+                </section>
+            ) : (
+                <section className="campaign-detail">
+                    <button
+                        className="secondary-btn"
+                        type="button"
+                        onClick={() => setSelectedCampaignId(null)}
+                    >
+                        Back to campaigns
+                    </button>
+
+                    {detailLoading && <p className="status-text">Loading campaign details...</p>}
+                    {detailError && <p className="status-text error">{detailError}</p>}
+
+                    {!detailLoading && !detailError && selectedCampaign && (
+                        <>
+                            <h2>{selectedCampaign.name || selectedCampaign.title}</h2>
+                            <div className="detail-section">
+                                <h3>Subject</h3>
+                                <p>{selectedCampaign.subject || 'No subject provided.'}</p>
+                            </div>
+                            <div className="detail-section">
+                                <h3>Body</h3>
+                                <p>{selectedCampaign.body || 'No body provided.'}</p>
+                            </div>
+                            <div className="detail-section">
+                                <h3>Emails</h3>
+                                {(selectedCampaign.emails || []).length === 0 ? (
+                                    <p>No emails added yet.</p>
+                                ) : (
+                                    <div className="email-list">
+                                        {(selectedCampaign.emails || []).map((email, index) => (
+                                            <div key={email.id || `${email.address}-${index}`} className="email-row">
+                                                <span className="email-address">{email.address || `Email ${index + 1}`}</span>
+                                                <span className="email-status">{email.status || 'pending'}</span>
+                                                <span className="email-date">{formatDate(email.sent_at)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    )}
+                </section>
+            )}
+        </div>
+    );
+}
+
+export default App;
