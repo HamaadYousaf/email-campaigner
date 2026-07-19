@@ -106,6 +106,49 @@ async def root():
     return {"message": "Hello World"}
 
 
+@app.get("/campaigns")
+async def get_campaigns():
+    """Return all campaigns with their title and total email count."""
+    try:
+        campaigns_response = supabase.table("campaigns").select("id, name").execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to query campaigns: {exc}")
+
+    campaigns = (
+        campaigns_response.data
+        if campaigns_response and getattr(campaigns_response, "data", None)
+        else []
+    )
+
+    result = []
+    for campaign in campaigns:
+        campaign_id = campaign["id"]
+
+        try:
+            emails_response = (
+                supabase.table("emails")
+                .select("id")
+                .eq("campaign_id", campaign_id)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to query campaign emails: {exc}"
+            )
+
+        email_count = (
+            len(emails_response.data)
+            if emails_response and getattr(emails_response, "data", None)
+            else 0
+        )
+
+        result.append(
+            {"id": campaign_id, "title": campaign["name"], "emails": email_count}
+        )
+
+    return result
+
+
 @app.post("/campaigns")
 async def create_campaign(payload: CampaignCreate):
     """Create a campaign."""
@@ -295,7 +338,7 @@ async def send_campaign(campaign_id: int):
         try:
             update_response = (
                 supabase.table("campaigns")
-                .update({"status": "queued"})
+                .update({"status": "complete"})
                 .eq("id", campaign_id)
                 .execute()
             )
